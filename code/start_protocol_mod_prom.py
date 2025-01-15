@@ -20,7 +20,9 @@ Basecalling will be enabled, producing FASTQ and BAM output files.
 
 import argparse
 import logging
+from pathlib import Path
 import sys
+import json
 
 # minknow_api.manager supplies "Manager" a wrapper around MinKNOW's Manager gRPC API with utilities
 # for querying sequencing positions + offline basecalling tools.
@@ -33,6 +35,7 @@ from minknow_api.examples.load_sample_sheet import (
     load_sample_sheet_csv,
 )
 from minknow_api.manager import Manager
+from minknow_api.protocol_pb2 import AnalysisWorkflowRequest
 
 # We need `find_protocol` to search for the required protocol given a kit + product code.
 from minknow_api.tools import protocols
@@ -115,6 +118,11 @@ def parse_args():
         "product-codes",
     )
 
+    parser.add_argument(
+        "--config-name",
+        help="Script name hint, if using custom configs when sequencing.",
+    )
+
     # SAMPLE SHEET
     position_args.add_argument(
         "--sample-sheet",
@@ -156,32 +164,6 @@ def parse_args():
         help="bar-code filtering (both ends of a strand must have a matching barcode)",
     )
 
-    parser.add_argument(
-        "--detect-mid-strand-barcodes",
-        action="store_true",
-        help="bar-code filtering for bar-codes in the middle of a strand",
-    )
-
-    parser.add_argument(
-        "--min-score",
-        type=float,
-        default=0.0,
-        help="read selection based on bar-code accuracy",
-    )
-
-    parser.add_argument(
-        "--min-score-rear",
-        type=float,
-        default=0.0,
-        help="read selection based on bar-code accuracy",
-    )
-
-    parser.add_argument(
-        "--min-score-mid",
-        type=float,
-        default=0.0,
-        help="read selection based on bar-code accuracy",
-    )
 
     # ALIGNMENT ARGUMENTS
     parser.add_argument(
@@ -294,12 +276,6 @@ def parse_args():
         help="time spent sequencing (in hours)",
     )
 
-    parser.add_argument(
-        "--no-active-channel-selection",
-        action="store_true",
-        help="allow dynamic selection of channels to select pores for sequencing, "
-        "ignored for Flongle flow-cells",
-    )
 
     parser.add_argument(
         "--mux-scan-period",
@@ -308,6 +284,27 @@ def parse_args():
         help="number of hours before a mux scan takes place, enables active-channel-selection, "
         "ignored for Flongle flow-cells",
     )
+
+
+    parser.add_argument(
+        "--simulation",
+        type=Path,
+        help="Bulk file to use for play back",
+    )
+    # Can either use a JSON file or a JSON string for workflow arguments
+    workflow_args = parser.add_mutually_exclusive_group()
+    workflow_args.add_argument(
+        "--workflow_json_file",
+        type=Path,
+        help="Input JSON file to use for analysis workflow request",
+    )
+    workflow_args.add_argument(
+        "--workflow_json_string",
+        type=str,
+        help="Input JSON string to use for analysis workflow request",
+    )
+
+
     parser.add_argument(
         "extra_args",
         metavar="ARGS",
@@ -596,6 +593,7 @@ def add_protocol_ids(experiment_specs, args):
             position_connection,
             product_code=product_code,
             kit=args.kit,
+            config_name=args.config_name,
             basecalling=args.basecalling,
             basecall_config=args.basecall_config,
             barcoding=args.barcoding,
@@ -626,6 +624,28 @@ def main():
     """Entrypoint to start protocol example"""
     # Parse arguments to be passed to started protocols:
     args = parse_args()
+
+
+    def _make_request(request_body):
+        req = json.loads(request_body)
+        # check request_body is valid
+        if "workflow_id" not in req or "parameters" not in req:
+            raise ValueError("Request body does not contain valid data.")
+        # convert string to protobuf
+        workflow_params = AnalysisWorkflowRequest()
+        workflow_params.proxy_request.api = "/workflow_instances/start"
+        workflow_params.proxy_request.request_body = request_body
+        return workflow_params
+    # parse json analysis workflow data from input file
+    analysis_workflow_request = None
+    if args.workflow_json_file:
+        request_body = args.workflow_json_file.read_text()
+        analysis_workflow_request = _make_request(request_body)
+    # parse json analysis workflow data from input string
+    if args.workflow_json_string:
+        analysis_workflow_request = _make_request(args.workflow_json_string)
+
+
 
     # Specify --verbose on the command line to get extra details about the actions performed
     if args.verbose:
@@ -721,9 +741,11 @@ def main():
             fast5_arguments=fast5_arguments,
             pod5_arguments=pod5_arguments,
             bam_arguments=bam_arguments,
-            disable_active_channel_selection=args.no_active_channel_selection,
+            analysis_workflow_request=analysis_workflow_request,
+            disable_active_channel_selection=False,
             mux_scan_period=args.mux_scan_period,
             stop_criteria=stop_criteria,
+            simulation_path=args.simulation,
             args=args.extra_args,  # Any extra args passed.
         )
 
