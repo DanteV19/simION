@@ -11,7 +11,7 @@ sleep 10 && echo "Initiated minknow server"
 bash /opt/ont/minknow/bin/add_simulated_prom.sh
 sleep 40 && echo "Added simulated promethion device!"
 
-python3 /simION/code/start_protocol_mod_prom.py --experiment-duration 2 --position 1A --kit SQK-LSK114 --pod5 --fastq --basecalling --fastq-reads-per-file 1000 --pod5-reads-per-file 1000
+python3 /simION/code/start_protocol_mod_prom.py --experiment-duration 2 --position 1A --kit SQK-LSK114 --pod5 --fastq --basecalling --fastq-reads-per-file 1000 --pod5-reads-per-file 1000 --simulation $1
 
 sleep 2
 python3 /simION/code/query_minknow_run.py
